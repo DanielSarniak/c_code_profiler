@@ -10,6 +10,14 @@
 
 static void* (*real_malloc)(size_t) = NULL;
 
+/* We need to replace real malloc etc. functions with
+   our implementations, before  any other lib is loaded,
+   but we want to use dlfcn lib here, so we make static
+   buffer dedicated to that lib in case it need to use malloc*/
+static int hooks_initializing = 0;
+static char bootstrap_buffer[4096];
+static size_t bootstrap_used = 0;
+
 typedef struct AllocationEntry {
     uintptr_t address;
     size_t size;

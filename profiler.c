@@ -6,9 +6,19 @@
 #include "profiler.h"
 
 
+static void* (*real_malloc)(size_t) = NULL;
+
+/* We need to replace real malloc etc. functions with
+   our implementations, before  any other lib is loaded,
+   but we want to use dlfcn lib here, so we make static
+   buffer dedicated to that lib in case it needs to use malloc*/
+static int hooks_initializing = 0;
+static char bootstrap_buffer[4096];
+static size_t bootstrap_used = 0;
+
 __attribute__((constructor))
 void init_profiler(void) {
-    real_malloc = dlsym(RTLD_NEXT, "malloc");
+    *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
 
     const char *err = "Hook to real_malloc found\n";
     write(1, err, strlen(err));
@@ -19,7 +29,7 @@ static void init_orig_functions() {
     
     hooks_initializing = 1;
 
-    real_malloc  = dlsym(RTLD_NEXT, "malloc");
+     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
 
     hooks_initializing = 0;
 }
@@ -72,6 +82,7 @@ int profiler_add(uintptr_t addr, size_t size)
     if (profiler.total_allocated > profiler.peak_allocated) {
         profiler.peak_allocated = profiler.total_allocated;
     }
+    return 1;
 }
 
 void* malloc(size_t size) {

@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "profiler.h"
-
+#include "utils.h"
 
 static void* (*real_malloc)(size_t) = NULL;
 
@@ -20,8 +20,8 @@ __attribute__((constructor))
 void init_profiler(void) {
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
 
-    const char *err = "Hook to real_malloc found\n";
-    write(1, err, strlen(err));
+    LOG_EX(LOG_INFO, "xxx");
+    LOG("Hook to real_malloc found");
 }
 
 static void init_orig_functions() {
@@ -93,12 +93,12 @@ void* malloc(size_t size) {
         }
         init_orig_functions();
     }
-    char *txt = "Malloc body\n";
-    write(1, txt, strlen(txt));
+    // char *txt = "Malloc body\n";
+    // write(1, txt, strlen(txt));
 
     void *ptr = real_malloc(size);
 
-    if(ptr)
+    if(ptr && ptr != (void*)&bootstrap_buffer)
     {
         profiler_add((uintptr_t)ptr, size);
     }

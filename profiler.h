@@ -30,11 +30,12 @@ static inline size_t hash_address(uintptr_t address) {
 }
 
 
-
 void* malloc(size_t size);
 
 
+static void init_orig_functions();
 
+void init_profiler(void);
 int profiler_add(uintptr_t addr, size_t size);
 
 #endif /* PROFILER_LIB_H */

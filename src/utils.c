@@ -15,14 +15,13 @@ void log_message(LogLevel level,
         case LOG_INFO:    prefix = "[LOG] "; break;
         case LOG_WARNING: prefix = "[WARNING] "; break;
         case LOG_ERROR:   prefix = "[ERROR] "; break;
-        default:           prefix = "[UNKNOWN] "; break;
+        default:          prefix = "[UNKNOWN] "; break;
     }
 
     write(STDERR_FILENO, prefix, strlen(prefix));
     write(STDERR_FILENO, file, strlen(file));
     write(STDERR_FILENO, ":", 1);
 
-    /* line -> prosty int to string bez printf */
     char buf[16];
     int i = 15;
     buf[i--] = '\0';

@@ -20,7 +20,6 @@ __attribute__((constructor))
 void init_profiler(void) {
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
 
-    LOG_EX(LOG_INFO, "xxx");
     LOG("Hook to real_malloc found");
 }
 

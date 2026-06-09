@@ -1,6 +1,8 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#define LOG_VERBOSE
+
 typedef enum
 {
     LOG_INFO,
@@ -15,9 +17,13 @@ void log_message(LogLevel level,
 
 #define LOG_EX(level, msg) log_message(level, __FILE__, __LINE__, msg)
 
-#define LOG(msg)   LOG_EX(LOG_INFO, msg)
 #define WARN(msg)  LOG_EX(LOG_WARNING, msg)
 #define ERROR(msg) LOG_EX(LOG_ERROR, msg)
 
+#ifdef LOG_VERBOSE
+    #define LOG(msg) log_message(LOG_INFO, __FILE__, __LINE__, msg)
+#else
+    #define LOG(msg) ((void)0)
+#endif
 
 #endif /* UTILS_H */

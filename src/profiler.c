@@ -37,8 +37,7 @@ static void* bootstrap_malloc(size_t size) {
 
     size = (size + 7) & ~7; // alignment to 8bits
     if (bootstrap_used + size > sizeof(bootstrap_buffer)) {
-        const char *err = "[ERROR] Bootstrap buffer overflow!\n";
-        write(2, err, sizeof(err) - 1);
+        ERROR("Bootstrap buffer overflow!\n");
         return NULL;
     }
     void* ptr = &bootstrap_buffer[bootstrap_used];
@@ -50,8 +49,7 @@ int profiler_add(uintptr_t addr, size_t size)
 {
     if (addr == 0)
     {
-        const char *err = "[ERROR] Try to alloc to NULL!\n";
-        write(2, err, strlen(err));
+        ERROR("Try to alloc to NULL!");
         return 0;
     }
 
@@ -59,15 +57,13 @@ int profiler_add(uintptr_t addr, size_t size)
 
     if( !real_malloc )
     {
-        const char *err = "[ERROR] Real malloc never found!\n";
-        write(2, err, strlen(err));
+        ERROR("Real malloc never found!");
         return 0;
     }
     AllocationNode* node = (AllocationNode*)real_malloc(sizeof(AllocationNode));
     if (!node)
     {
-        const char *err = "[ERROR] Real malloc failed!\n";
-        write(2, err, strlen(err));
+        ERROR("Real malloc failed!");
         return 0;
     }
 
@@ -92,8 +88,6 @@ void* malloc(size_t size) {
         }
         init_orig_functions();
     }
-    // char *txt = "Malloc body\n";
-    // write(1, txt, strlen(txt));
 
     void *ptr = real_malloc(size);
 

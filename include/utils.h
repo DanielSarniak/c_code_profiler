@@ -7,18 +7,21 @@ typedef enum
 {
     LOG_INFO,
     LOG_WARNING,
-    LOG_ERROR
+    LOG_ERROR,
+    LOG_PRINT
 } LogLevel;
 
 void log_message(LogLevel level,
                     const char *file,
                     int line,
                     const char *msg);
+void print_num(uintptr_t num, int base);
 
 #define LOG_EX(level, msg) log_message(level, __FILE__, __LINE__, msg)
 
 #define WARN(msg)  LOG_EX(LOG_WARNING, msg)
 #define ERROR(msg) LOG_EX(LOG_ERROR, msg)
+#define PRINT(msg) LOG_EX(LOG_PRINT, msg)
 
 #ifdef LOG_VERBOSE
     #define LOG(msg) log_message(LOG_INFO, __FILE__, __LINE__, msg)

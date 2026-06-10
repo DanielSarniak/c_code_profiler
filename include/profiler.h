@@ -32,6 +32,7 @@ void* malloc(size_t size);
 void free(void* ptr);
 
 void init_profiler(void);
+void finalize_profiler(void);
 int profiler_add(uintptr_t addr, size_t size);
 int profiler_remove(uintptr_t addr);
 

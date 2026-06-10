@@ -2,13 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <string.h>
 
 #include "profiler.h"
 #include "utils.h"
 
 static void* (*real_malloc)(size_t) = NULL;
-static void* (*real_free)(size_t) = NULL;
+static void (*real_free)(void*) = NULL;
 
 /* We need to replace real malloc etc. functions with
    our implementations, before  any other lib is loaded,
@@ -117,7 +116,7 @@ int profiler_remove(uintptr_t addr) {
                 prev->next = curr->next;
             }
 
-            real_free((uintptr_t)curr);
+            real_free(curr);
             break;
         }
         prev = curr;
@@ -127,9 +126,54 @@ int profiler_remove(uintptr_t addr) {
     if (isMemAlloc) {
         profiler.total_allocated -= freed_size;
     } else {
-        WARN("[PROFILER ALERT] Attempted free on unregistered address!\n");
+        WARN("Attempted free on unregistered address!\n");
     }
     return 1;
+}
+
+__attribute__((destructor))
+void finalize_profiler(void) 
+{
+    PRINT("\n\n========================================\n");
+    PRINT("      C_CODE_PROFILER REPORT             \n");
+    PRINT("========================================\n");
+
+    size_t leak_count = 0;
+    size_t total_leaked_bytes = 0;
+
+    for (int i = 0; i < HASH_MAP_SIZE; i++) {
+
+        AllocationEntry* curr = profiler.buckets[i];
+        while (curr != NULL) {
+            leak_count++;
+            total_leaked_bytes += curr->size;
+
+            PRINT("[LEAK] Address: 0x");
+            print_num(curr->address, 16);
+            PRINT(" | Size: ");
+            print_num(curr->size, 10);
+            PRINT(" bytes\n");
+
+            AllocationEntry* next = curr->next;
+            real_free(curr); 
+            curr = next;
+        }
+        
+    }
+
+    PRINT("----------------------------------------\n");
+    PRINT("Total leaks found: ");
+    print_num(leak_count, 10);
+    PRINT("\n");
+
+    PRINT("Total memory leaked: ");
+    print_num(total_leaked_bytes, 10);
+    PRINT(" bytes\n");
+
+    PRINT("Peak memory usage: ");
+    print_num(profiler.peak_allocated, 10);
+    PRINT(" bytes\n");
+    PRINT("========================================\n");
 }
 
 void* malloc(size_t size) {
@@ -177,5 +221,5 @@ void free(void* ptr) {
         exit(1);
     }
 
-    real_free((uintptr_t)ptr);
+    real_free(ptr);
 }

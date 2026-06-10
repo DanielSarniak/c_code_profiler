@@ -1,6 +1,8 @@
 ## How to use
 cmake -S . -B build
+
 cmake --build build
+
 ./build/c_code_profiler simple_test
 
 ## Caveats & Internal glibc Allocations

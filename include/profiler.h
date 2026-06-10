@@ -12,10 +12,10 @@ typedef struct AllocationEntry {
     uintptr_t address;
     size_t size;
     struct AllocationEntry* next;
-} AllocationNode;
+} AllocationEntry;
 
 typedef struct {
-    AllocationNode* buckets[HASH_MAP_SIZE];
+    AllocationEntry* buckets[HASH_MAP_SIZE];
     
     size_t total_allocated;
     size_t peak_allocated;
@@ -29,9 +29,10 @@ static inline size_t hash_address(uintptr_t address) {
 
 
 void* malloc(size_t size);
-
+void free(void* ptr);
 
 void init_profiler(void);
 int profiler_add(uintptr_t addr, size_t size);
+int profiler_remove(uintptr_t addr);
 
 #endif /* PROFILER_LIB_H */

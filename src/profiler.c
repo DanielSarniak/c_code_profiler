@@ -1,4 +1,5 @@
 #include <dlfcn.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 #include "utils.h"
 
 static void* (*real_malloc)(size_t) = NULL;
+static void* (*real_free)(size_t) = NULL;
 
 /* We need to replace real malloc etc. functions with
    our implementations, before  any other lib is loaded,
@@ -19,16 +21,19 @@ static size_t bootstrap_used = 0;
 __attribute__((constructor))
 void init_profiler(void) {
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
-
-    LOG("Hook to real_malloc found");
+    *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
 }
 
 static void init_orig_functions() {
-    if (real_malloc) return;
+    if (real_malloc && real_free)
+    {
+        return;
+    }
     
     hooks_initializing = 1;
 
-     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
+    *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
+    *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
 
     hooks_initializing = 0;
 }
@@ -53,19 +58,20 @@ int profiler_add(uintptr_t addr, size_t size)
         return 0;
     }
 
-    size_t index = hash_address(addr);
-
     if( !real_malloc )
     {
         ERROR("Real malloc never found!");
         return 0;
     }
-    AllocationNode* node = (AllocationNode*)real_malloc(sizeof(AllocationNode));
+
+    AllocationEntry* node = (AllocationEntry*)real_malloc(sizeof(AllocationEntry));
     if (!node)
     {
         ERROR("Real malloc failed!");
         return 0;
     }
+
+    size_t index = hash_address(addr);
 
     node->address = addr;
     node->size = size;
@@ -80,6 +86,52 @@ int profiler_add(uintptr_t addr, size_t size)
     return 1;
 }
 
+int profiler_remove(uintptr_t addr) {
+    if (addr == 0)
+    {
+        ERROR("Try to free NULL address!");
+        return 0;
+    }
+
+    if( !real_free )
+    {
+        ERROR("Real free never found!");
+        return 0;
+    }
+
+    size_t index = hash_address(addr);
+    
+    AllocationEntry* curr = profiler.buckets[index];
+    AllocationEntry* prev = NULL;
+    size_t freed_size = 0;
+    int isMemAlloc = 0;
+
+    while (curr != NULL) {
+        if (curr->address == addr) {
+            freed_size = curr->size;
+            isMemAlloc = 1;
+            
+            if (prev == NULL) {
+                profiler.buckets[index] = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+
+            real_free((uintptr_t)curr);
+            break;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    if (isMemAlloc) {
+        profiler.total_allocated -= freed_size;
+    } else {
+        WARN("[PROFILER ALERT] Attempted free on unregistered address!\n");
+    }
+    return 1;
+}
+
 void* malloc(size_t size) {
     if (!real_malloc) {
         if( hooks_initializing )
@@ -89,11 +141,41 @@ void* malloc(size_t size) {
         init_orig_functions();
     }
 
+    LOG("MALLOC USED");
     void *ptr = real_malloc(size);
 
     if(ptr && ptr != (void*)&bootstrap_buffer)
     {
-        profiler_add((uintptr_t)ptr, size);
+        if( !profiler_add((uintptr_t)ptr, size) )
+        {
+            ERROR("Error occurred during memory allocation");
+            exit(1);
+        }
     }
     return ptr;
+}
+
+
+void free(void* ptr) {
+    if (!real_free) {
+        init_orig_functions();
+    }
+
+    if (ptr == NULL)
+    {
+        return;
+    }
+
+    if (ptr >= (void*)bootstrap_buffer && ptr < (void*)(bootstrap_buffer + sizeof(bootstrap_buffer))) {
+        return;
+    }
+
+    LOG("FREE USED");
+    if( !profiler_remove((uintptr_t)ptr) )
+    {
+        ERROR("Error occurred during freeing memory");
+        exit(1);
+    }
+
+    real_free((uintptr_t)ptr);
 }

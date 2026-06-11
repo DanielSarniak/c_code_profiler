@@ -9,6 +9,7 @@
 static void* (*real_malloc)(size_t) = NULL;
 static void (*real_free)(void*) = NULL;
 static void* (*real_calloc)(size_t, size_t) = NULL;
+static void* (*real_realloc)(void*, size_t) = NULL;
 
 /* We need to replace real malloc etc. functions with
    our implementations, before  any other lib is loaded,
@@ -18,15 +19,21 @@ static int hooks_initializing = 0;
 static char bootstrap_buffer[4096];
 static size_t bootstrap_used = 0;
 
+static int is_bootstrap_ptr(void* ptr) {
+    return (ptr >= (void*)bootstrap_buffer && 
+            ptr < (void*)(bootstrap_buffer + sizeof(bootstrap_buffer)));
+}
+
 __attribute__((constructor))
 void init_profiler(void) {
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
     *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
     *(void **)(&real_calloc)  = dlsym(RTLD_NEXT, "calloc");
+    *(void **)(&real_realloc)  = dlsym(RTLD_NEXT, "realloc");
 }
 
 static void init_orig_functions() {
-    if (real_malloc && real_free && real_calloc)
+    if (real_malloc && real_free && real_calloc && real_realloc)
     {
         return;
     }
@@ -35,6 +42,8 @@ static void init_orig_functions() {
 
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
     *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
+    *(void **)(&real_calloc)  = dlsym(RTLD_NEXT, "calloc");
+    *(void **)(&real_realloc)  = dlsym(RTLD_NEXT, "realloc");
 
     hooks_initializing = 0;
 }
@@ -247,4 +256,47 @@ void* calloc(size_t nmemb, size_t size) {
     }
 
     return ptr;
+}
+
+void* realloc(void* ptr, size_t size) {
+    if (!real_realloc) {
+        if (hooks_initializing) {
+            if (ptr == NULL) 
+            {
+                return bootstrap_malloc(size);
+            }
+            void* new_ptr = bootstrap_malloc(size);
+            if (new_ptr && ptr) {
+                memcpy(new_ptr, ptr, size);
+            }
+            return new_ptr;
+        }
+        init_orig_functions();
+    }
+
+    if (ptr == NULL) {
+        return malloc(size);
+    }
+    if (size == 0) {
+        free(ptr);
+        return NULL;
+    }
+
+    if (is_bootstrap_ptr(ptr)) {
+        void* new_ptr = malloc(size);
+        if (new_ptr) {
+            memcpy(new_ptr, ptr, size);
+        }
+        return new_ptr;
+    }
+
+    void* new_ptr = real_realloc(ptr, size);
+
+    if (new_ptr) {
+        profiler_remove((uintptr_t)ptr);
+        
+        profiler_add((uintptr_t)new_ptr, size);
+    }
+
+    return new_ptr;
 }

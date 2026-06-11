@@ -41,7 +41,7 @@ void list_tests()
 void run_test(const char *name)
 {
     char path[256];
-    snprintf(path, sizeof(path), "./build/%s", name);
+    snprintf(path, sizeof(path), "%s", name);
 
     printf("Running: %s\n", path);
 

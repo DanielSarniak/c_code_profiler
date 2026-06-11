@@ -5,7 +5,6 @@
 #include "utils.h"
 
 int main() {
-    setvbuf(stdout, NULL, _IONBF, 0);
     printf("Hello, World!\n");
 
     int *ptr = (int*)malloc(sizeof(int));

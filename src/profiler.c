@@ -8,6 +8,7 @@
 
 static void* (*real_malloc)(size_t) = NULL;
 static void (*real_free)(void*) = NULL;
+static void* (*real_calloc)(size_t, size_t) = NULL;
 
 /* We need to replace real malloc etc. functions with
    our implementations, before  any other lib is loaded,
@@ -21,10 +22,11 @@ __attribute__((constructor))
 void init_profiler(void) {
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
     *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
+    *(void **)(&real_calloc)  = dlsym(RTLD_NEXT, "calloc");
 }
 
 static void init_orig_functions() {
-    if (real_malloc && real_free)
+    if (real_malloc && real_free && real_calloc)
     {
         return;
     }
@@ -222,4 +224,27 @@ void free(void* ptr) {
     }
 
     real_free(ptr);
+}
+
+void* calloc(size_t nmemb, size_t size) {
+    if (!real_calloc) {
+        if (hooks_initializing) {
+            size_t total = nmemb * size;
+            void* ptr = bootstrap_malloc(total);
+            if (ptr) {
+                char* p = (char*)ptr;
+                for (size_t i = 0; i < total; i++) p[i] = 0;
+            }
+            return ptr;
+        }
+        init_orig_functions();
+    }
+
+    void* ptr = real_calloc(nmemb, size);
+
+    if (ptr) {
+        profiler_add((uintptr_t)ptr, nmemb * size);
+    }
+
+    return ptr;
 }

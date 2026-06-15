@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #define HASH_MAP_SIZE   1021
+#define MAX_USER_RANGES 16
 
 typedef struct AllocationEntry {
     uintptr_t address;
@@ -23,7 +24,13 @@ typedef struct {
     pthread_mutex_t stats_lock;
 } ProfilerMap;
 
-static ProfilerMap profiler = {0};
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+} UserMemRange;
+
+static UserMemRange user_ranges[MAX_USER_RANGES];
+static int user_ranges_count = 0;
 
 static inline size_t hash_address(uintptr_t address) {
     return ((address >> 4) ^ (address >> 12)) % HASH_MAP_SIZE;

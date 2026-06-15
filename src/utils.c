@@ -69,6 +69,6 @@ void print_num(uintptr_t num, int base) {
     }
 
     for (int j = i - 1; j >= 0; j--) {
-        write(2, &buf[j], 1);
+        write(STDOUT_FILENO, &buf[j], 1);
     }
 }

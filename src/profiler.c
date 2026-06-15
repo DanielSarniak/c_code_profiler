@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include "profiler.h"
 #include "utils.h"
@@ -12,6 +13,8 @@ static void* (*real_malloc)(size_t) = NULL;
 static void (*real_free)(void*) = NULL;
 static void* (*real_calloc)(size_t, size_t) = NULL;
 static void* (*real_realloc)(void*, size_t) = NULL;
+
+static ProfilerMap profiler = {0};
 
 /* We need to replace real malloc etc. functions with
    our implementations, before  any other lib is loaded,
@@ -23,37 +26,14 @@ static _Thread_local int hooks_initializing = 0;
 static _Thread_local int internal_memory_usage = 0;
 static pthread_once_t init_done = PTHREAD_ONCE_INIT;
 
+static char* app_name = NULL;
+static char exe_path[256] = {0};
+static uintptr_t libc_start_addr = 0;
+static uintptr_t libc_end_addr = 0;
+
 static int is_bootstrap_ptr(void* ptr) {
     return (ptr >= (void*)bootstrap_buffer && 
             ptr < (void*)(bootstrap_buffer + sizeof(bootstrap_buffer)));
-}
-
-const char* const ignored_symbols[] = {
-    "_IO_",
-    "printf",
-    "vfprintf",
-    "puts",
-    "_dl_",
-    "dlopen",
-    "pthread_",
-    "setlocale",
-    "getpw",
-    "getaddrinfo",
-    NULL
-};
-
-
-__attribute__((constructor))
-void init_profiler(void) {
-    for (int i = 0; i < HASH_MAP_SIZE; i++) {
-        pthread_mutex_init(&profiler.locks[i], NULL);
-    }
-    pthread_mutex_init(&profiler.stats_lock, NULL);
-
-    *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
-    *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
-    *(void **)(&real_calloc)  = dlsym(RTLD_NEXT, "calloc");
-    *(void **)(&real_realloc)  = dlsym(RTLD_NEXT, "realloc");
 }
 
 static void init_orig_functions() {
@@ -71,10 +51,58 @@ static void init_orig_functions() {
 
     hooks_initializing = 0;
 }
+__attribute__((constructor))
+void init_profiler(void) {
+    for (int i = 0; i < HASH_MAP_SIZE; i++) {
+        pthread_mutex_init(&profiler.locks[i], NULL);
+    }
+    pthread_mutex_init(&profiler.stats_lock, NULL);
+
+    init_orig_functions();
+
+    internal_memory_usage = 1;
+    if (readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1) <= 0) {
+        WARN("CAN'T GET USER PROGRAM PATH");
+        return;
+    }
+
+    app_name  = strrchr(exe_path, '/');
+    if (app_name) {
+        app_name++;
+    } else {
+        app_name = exe_path;
+    }
+
+    LOG("APP NAME FOUND: ");
+    LOG(app_name);
+
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f)
+    {
+        WARN("CAN'T OPEN /proc/self/maps");
+        return;
+    }
+
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, exe_path)) {
+            uintptr_t start, end;
+            if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end) == 2) {
+                if (user_ranges_count < MAX_USER_RANGES) {
+                    user_ranges[user_ranges_count].start = start;
+                    user_ranges[user_ranges_count].end = end;
+                    user_ranges_count++;
+                }
+            }
+        }
+    }
+    fclose(f);
+    internal_memory_usage = 0;
+}
 
 static void* bootstrap_malloc(size_t size) {
 
-    size = (size + 7) & ~7; // alignment to 8bits
+    size = (size + 7) & ~7; // alignment to 8 bytes
     if (bootstrap_used + size > sizeof(bootstrap_buffer)) {
         ERROR("Bootstrap buffer overflow!\n");
         return NULL;
@@ -84,16 +112,15 @@ static void* bootstrap_malloc(size_t size) {
     return ptr;
 }
 
-static int is_glibc_internal_alloc(void) {
-    void* caller = __builtin_return_address(1);
-    if (!caller) return 0;
+static int is_user_code(void) {
+    if (user_ranges_count == 0) return 0;
 
-    Dl_info info;
-    if (dladdr(caller, &info) != 0 && info.dli_sname != NULL) {
-        for (int i = 0; ignored_symbols[i] != NULL; i++) {
-            if (strstr(info.dli_sname, ignored_symbols[i]) != NULL) {
-                return 1;
-            }
+    void* caller = __builtin_return_address(1);
+    uintptr_t addr = (uintptr_t)caller;
+
+    for (int i = 0; i < user_ranges_count; i++) {
+        if (addr >= user_ranges[i].start && addr < user_ranges[i].end) {
+            return 1;
         }
     }
 
@@ -192,9 +219,27 @@ int profiler_remove(uintptr_t addr) {
 __attribute__((destructor))
 void finalize_profiler(void) 
 {
-    PRINT("\n\n========================================\n");
+    PRINT("\n\n ========================================\n");
     PRINT("      C_CODE_PROFILER REPORT             \n");
     PRINT("========================================\n");
+
+    PRINT("Application name: ");
+    PRINT(app_name ? app_name : "Unknown");
+    PRINT("\n");
+    PRINT("Application path: ");
+    PRINT(exe_path ? exe_path : "Unknown");
+    PRINT("\n\n Application code ranges in memory (function addresses):\n");
+
+    for(int i = 0; i < user_ranges_count; i++)
+    {
+        PRINT("0x");
+        print_num(user_ranges[i].start, 16);
+        PRINT(" - 0x");
+        print_num(user_ranges[i].end, 16);
+        PRINT("\n");
+    }
+
+    PRINT("----------------------------------------\n");
 
     size_t leak_count = 0;
     size_t total_leaked_bytes = 0;
@@ -258,7 +303,7 @@ void* malloc(size_t size) {
 
     void *ptr = real_malloc(size);
 
-    if(ptr && ptr != (void*)&bootstrap_buffer && !is_glibc_internal_alloc())
+    if(ptr && ptr != (void*)&bootstrap_buffer && is_user_code())
     {
         LOG("ADD PROFILER");
         if( !profiler_add((uintptr_t)ptr, size) )
@@ -298,7 +343,7 @@ void free(void* ptr) {
 
     internal_memory_usage = 1;
 
-    if (!is_glibc_internal_alloc())
+    if (is_user_code())
     {
         if( !profiler_remove((uintptr_t)ptr) )
         {
@@ -341,7 +386,7 @@ void* calloc(size_t nmemb, size_t size) {
 
     void* ptr = real_calloc(nmemb, size);
 
-    if (ptr && !is_glibc_internal_alloc()) {
+    if (ptr && is_user_code()) {
         if( !profiler_add((uintptr_t)ptr, nmemb * size) )
         {
             ERROR("Error occurred during memory allocation");
@@ -401,7 +446,7 @@ void* realloc(void* ptr, size_t size) {
             exit(1);
         }
         
-        if(!is_glibc_internal_alloc())
+        if(is_user_code())
         {
             if( !profiler_add((uintptr_t)new_ptr, size) )
             {

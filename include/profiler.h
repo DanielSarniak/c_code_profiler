@@ -16,9 +16,11 @@ typedef struct AllocationEntry {
 
 typedef struct {
     AllocationEntry* buckets[HASH_MAP_SIZE];
+    pthread_mutex_t locks[HASH_MAP_SIZE];
     
     size_t total_allocated;
     size_t peak_allocated;
+    pthread_mutex_t stats_lock;
 } ProfilerMap;
 
 static ProfilerMap profiler = {0};

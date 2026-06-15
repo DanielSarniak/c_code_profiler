@@ -17,10 +17,11 @@ static void* (*real_realloc)(void*, size_t) = NULL;
    our implementations, before  any other lib is loaded,
    but we want to use dlfcn lib here, so we make static
    buffer dedicated to that lib in case it needs to use malloc*/
-static int hooks_initializing = 0;
 static char bootstrap_buffer[4096];
 static size_t bootstrap_used = 0;
-static __thread int internal_memory_usage = 0;
+static _Thread_local int hooks_initializing = 0;
+static _Thread_local int internal_memory_usage = 0;
+static pthread_once_t init_done = PTHREAD_ONCE_INIT;
 
 static int is_bootstrap_ptr(void* ptr) {
     return (ptr >= (void*)bootstrap_buffer && 
@@ -44,6 +45,11 @@ const char* const ignored_symbols[] = {
 
 __attribute__((constructor))
 void init_profiler(void) {
+    for (int i = 0; i < HASH_MAP_SIZE; i++) {
+        pthread_mutex_init(&profiler.locks[i], NULL);
+    }
+    pthread_mutex_init(&profiler.stats_lock, NULL);
+
     *(void **)(&real_malloc) = dlsym(RTLD_NEXT, "malloc");
     *(void **)(&real_free) = dlsym(RTLD_NEXT, "free");
     *(void **)(&real_calloc)  = dlsym(RTLD_NEXT, "calloc");
@@ -79,7 +85,7 @@ static void* bootstrap_malloc(size_t size) {
 }
 
 static int is_glibc_internal_alloc(void) {
-void* caller = __builtin_return_address(1);
+    void* caller = __builtin_return_address(1);
     if (!caller) return 0;
 
     Dl_info info;
@@ -116,17 +122,20 @@ int profiler_add(uintptr_t addr, size_t size)
     }
 
     size_t index = hash_address(addr);
-
+    pthread_mutex_lock(&profiler.locks[index]);
     node->address = addr;
     node->size = size;
 
     node->next = profiler.buckets[index];
     profiler.buckets[index] = node;
+    pthread_mutex_unlock(&profiler.locks[index]);
 
+    pthread_mutex_lock(&profiler.stats_lock);
     profiler.total_allocated += size;
     if (profiler.total_allocated > profiler.peak_allocated) {
         profiler.peak_allocated = profiler.total_allocated;
     }
+    pthread_mutex_unlock(&profiler.stats_lock);
     return 1;
 }
 
@@ -144,6 +153,7 @@ int profiler_remove(uintptr_t addr) {
     }
 
     size_t index = hash_address(addr);
+    pthread_mutex_lock(&profiler.locks[index]);
     
     AllocationEntry* curr = profiler.buckets[index];
     AllocationEntry* prev = NULL;
@@ -167,9 +177,12 @@ int profiler_remove(uintptr_t addr) {
         prev = curr;
         curr = curr->next;
     }
+    pthread_mutex_unlock(&profiler.locks[index]);
 
     if (isMemAlloc) {
+        pthread_mutex_lock(&profiler.stats_lock);
         profiler.total_allocated -= freed_size;
+        pthread_mutex_unlock(&profiler.stats_lock);
     } else {
         WARN("Attempted free on unregistered address!\n");
     }
@@ -187,6 +200,7 @@ void finalize_profiler(void)
     size_t total_leaked_bytes = 0;
 
     for (int i = 0; i < HASH_MAP_SIZE; i++) {
+        pthread_mutex_lock(&profiler.locks[i]);
 
         AllocationEntry* curr = profiler.buckets[i];
         while (curr != NULL) {
@@ -203,7 +217,8 @@ void finalize_profiler(void)
             real_free(curr); 
             curr = next;
         }
-        
+
+        pthread_mutex_unlock(&profiler.locks[i]);
     }
 
     PRINT("----------------------------------------\n");
@@ -219,6 +234,11 @@ void finalize_profiler(void)
     print_num(profiler.peak_allocated, 10);
     PRINT(" bytes\n");
     PRINT("========================================\n");
+
+    for (int i = 0; i < HASH_MAP_SIZE; i++) {
+        pthread_mutex_destroy(&profiler.locks[i]);
+    }
+    pthread_mutex_destroy(&profiler.stats_lock);
 }
 
 void* malloc(size_t size) {
@@ -231,7 +251,7 @@ void* malloc(size_t size) {
         {
             return bootstrap_malloc(size);
         }
-        init_orig_functions();
+        pthread_once(&init_done, init_orig_functions);
     }
 
     internal_memory_usage = 1;
@@ -263,7 +283,7 @@ void free(void* ptr) {
     }
 
     if (!real_free) {
-        init_orig_functions();
+        pthread_once(&init_done, init_orig_functions);
     }
 
     if (ptr == NULL)
@@ -278,10 +298,13 @@ void free(void* ptr) {
 
     internal_memory_usage = 1;
 
-    if( !profiler_remove((uintptr_t)ptr) )
+    if (!is_glibc_internal_alloc())
     {
-        ERROR("Error occurred during freeing memory");
-        exit(1);
+        if( !profiler_remove((uintptr_t)ptr) )
+        {
+            ERROR("Error occurred during freeing memory");
+            exit(1);
+        }
     }
 
     internal_memory_usage = 0;
@@ -311,7 +334,7 @@ void* calloc(size_t nmemb, size_t size) {
             }
             return ptr;
         }
-        init_orig_functions();
+        pthread_once(&init_done, init_orig_functions);
     }
 
     internal_memory_usage = 1;
@@ -326,7 +349,7 @@ void* calloc(size_t nmemb, size_t size) {
         }
     }
 
-    internal_memory_usage - 0;
+    internal_memory_usage = 0;
 
     return ptr;
 }
@@ -348,7 +371,7 @@ void* realloc(void* ptr, size_t size) {
             }
             return new_ptr;
         }
-        init_orig_functions();
+        pthread_once(&init_done, init_orig_functions);
     }
 
     if (ptr == NULL) {

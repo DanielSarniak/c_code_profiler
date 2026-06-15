@@ -1,7 +1,7 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#define LOG_VERBOSE
+// #define LOG_VERBOSE
 
 typedef enum
 {
